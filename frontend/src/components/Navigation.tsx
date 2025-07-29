@@ -6,6 +6,7 @@ import {
   FileTextOutlined,
   BarChartOutlined,
   ExperimentOutlined,
+  FundOutlined,
 } from '@ant-design/icons';
 
 const Navigation: React.FC = () => {
@@ -16,22 +17,27 @@ const Navigation: React.FC = () => {
     {
       key: '/',
       icon: <DashboardOutlined />,
-      label: 'Dashboard',
+      label: '仪表板',
     },
     {
       key: '/news',
       icon: <FileTextOutlined />,
-      label: 'News',
+      label: '新闻资讯',
     },
     {
       key: '/analysis',
       icon: <BarChartOutlined />,
-      label: 'Analysis',
+      label: '分析报告',
+    },
+    {
+      key: '/smart-analysis',
+      icon: <FundOutlined />,
+      label: '智能分析',
     },
     {
       key: '/backtest',
       icon: <ExperimentOutlined />,
-      label: 'Backtest',
+      label: '回测验证',
     },
   ];
 
@@ -58,7 +64,7 @@ const Navigation: React.FC = () => {
         selectedKeys={[location.pathname]}
         items={menuItems}
         onClick={handleMenuClick}
-        style={{ flex: 1, minWidth: 0 }}
+        style={{ flex: 1, minWidth: 0, border: 'none' }}
       />
     </div>
   );

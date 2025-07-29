@@ -153,7 +153,7 @@ const NewsPage: React.FC = () => {
       title: 'Actions',
       key: 'actions',
       width: 80,
-      render: (_, record: NewsArticle) => (
+      render: (_: any, record: NewsArticle) => (
         <Button
           type="text"
           icon={<EyeOutlined />}

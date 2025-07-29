@@ -1,7 +1,7 @@
 import React from 'react';
 import { Row, Col, Card, Statistic, Button, Space, Alert } from 'antd';
 import { useQuery } from 'react-query';
-import { ReloadOutlined, TrendingUpOutlined, TrendingDownOutlined, FileTextOutlined, BarChartOutlined, TagOutlined } from '@ant-design/icons';
+import { ReloadOutlined, RiseOutlined, FallOutlined, FileTextOutlined, BarChartOutlined, TagOutlined } from '@ant-design/icons';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
 import { newsApi, analysisApi } from '../services/api';
 import { ImpactSummary } from '../types';
@@ -68,7 +68,7 @@ const Dashboard: React.FC = () => {
             <Statistic
               title="High Impact News"
               value={trendingNews?.length || 0}
-              prefix={<TrendingUpOutlined />}
+              prefix={<RiseOutlined />}
               valueStyle={{ color: '#cf1322' }}
             />
           </Card>

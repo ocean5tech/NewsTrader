@@ -1,0 +1,257 @@
+{
+  "name": "NewsTrader Basic News Scraper",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://feeds.reuters.com/reuters/businessNews",
+        "options": {
+          "headers": {
+            "User-Agent": "NewsTrader/1.0"
+          }
+        }
+      },
+      "id": "reuters-rss",
+      "name": "Reuters RSS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        400,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://feeds.bloomberg.com/markets/news.rss",
+        "options": {
+          "headers": {
+            "User-Agent": "NewsTrader/1.0"
+          }
+        }
+      },
+      "id": "bloomberg-rss",
+      "name": "Bloomberg RSS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        400,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 解析RSS内容并提取新闻文章\nconst feedparser = require('feedparser');\nconst stream = require('stream');\n\n// 处理所有RSS源的响应\nconst allArticles = [];\n\nfor (const item of $input.all()) {\n  try {\n    const xmlData = item.json.data || item.json;\n    \n    // 简单的XML解析 - 提取基本信息\n    const titleMatch = xmlData.match(/<title[^>]*><!\\[CDATA\\[([^\\]]+)\\]\\]><\\/title>|<title[^>]*>([^<]+)<\\/title>/g);\n    const linkMatch = xmlData.match(/<link[^>]*>([^<]+)<\\/link>/g);\n    const descMatch = xmlData.match(/<description[^>]*><!\\[CDATA\\[([^\\]]+)\\]\\]><\\/description>|<description[^>]*>([^<]+)<\\/description>/g);\n    const dateMatch = xmlData.match(/<pubDate[^>]*>([^<]+)<\\/pubDate>/g);\n    \n    if (titleMatch && linkMatch) {\n      // 提取第一个匹配项（通常是标题）\n      for (let i = 1; i < Math.min(titleMatch.length, 6); i++) {\n        const title = titleMatch[i]?.replace(/<[^>]+>/g, '').replace(/<!\\[CDATA\\[|\\]\\]>/g, '').trim();\n        const link = linkMatch[i]?.replace(/<[^>]+>/g, '').trim();\n        const description = descMatch && descMatch[i] ? descMatch[i].replace(/<[^>]+>/g, '').replace(/<!\\[CDATA\\[|\\]\\]>/g, '').trim() : '';\n        const pubDate = dateMatch && dateMatch[i] ? dateMatch[i].replace(/<[^>]+>/g, '').trim() : '';\n        \n        if (title && link && title.length > 10) {\n          // 检查是否包含交易相关关键词\n          const tradingKeywords = ['stock', 'market', 'trading', 'shares', 'investment', 'economy', 'fed', 'federal reserve', 'earnings', 'revenue', 'profit', 'loss', 'nasdaq', 'dow', 'sp500', 's&p'];\n          const isRelevant = tradingKeywords.some(keyword => \n            title.toLowerCase().includes(keyword) || \n            description.toLowerCase().includes(keyword)\n          );\n          \n          if (isRelevant) {\n            allArticles.push({\n              title: title,\n              url: link,\n              summary: description,\n              published_at: pubDate,\n              source: item.json.url || 'RSS Feed',\n              relevance_score: Math.random() * 10, // 临时评分\n              extracted_at: new Date().toISOString()\n            });\n          }\n        }\n      }\n    }\n  } catch (error) {\n    console.log('Error parsing RSS:', error.message);\n  }\n}\n\n// 去重处理\nconst uniqueArticles = [];\nconst seenUrls = new Set();\n\nfor (const article of allArticles) {\n  if (!seenUrls.has(article.url)) {\n    seenUrls.add(article.url);\n    uniqueArticles.push(article);\n  }\n}\n\nconsole.log(`Processed ${uniqueArticles.length} unique articles`);\n\nreturn uniqueArticles.map(article => ({ json: article }));"
+      },
+      "id": "process-rss",
+      "name": "Process RSS Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition1",
+              "leftValue": "={{ $json.relevance_score }}",
+              "rightValue": 5,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "filter-high-impact",
+      "name": "Filter High Impact",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/api/v1/news/articles",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonParameters": true,
+        "options": {}
+      },
+      "id": "save-to-api",
+      "name": "Save to NewsTrader API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1000,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/api/v1/news/scrape",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "title",
+              "value": "={{ $json.title }}"
+            },
+            {
+              "name": "url", 
+              "value": "={{ $json.url }}"
+            },
+            {
+              "name": "summary",
+              "value": "={{ $json.summary }}"
+            },
+            {
+              "name": "source",
+              "value": "={{ $json.source }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "trigger-analysis",
+      "name": "Trigger Analysis",
+      "type": "n8n-nodes-base.httpRequest", 
+      "typeVersion": 4.1,
+      "position": [
+        1000,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Reuters RSS",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Bloomberg RSS", 
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reuters RSS": {
+      "main": [
+        [
+          {
+            "node": "Process RSS Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bloomberg RSS": {
+      "main": [
+        [
+          {
+            "node": "Process RSS Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process RSS data": {
+      "main": [
+        [
+          {
+            "node": "Filter High Impact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter High Impact": {
+      "main": [
+        [
+          {
+            "node": "Save to NewsTrader API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Trigger Analysis",
+            "type": "main", 
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-15T10:00:00.000Z",
+  "versionId": "1"
+}
