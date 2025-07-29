@@ -1,0 +1,250 @@
+# NewsTrader - AI-Powered News Analysis for Trading
+
+An intelligent news analysis system that uses Claude AI to analyze financial news and predict market impact on stocks, futures, and commodities.
+
+## Features
+
+- **Automated News Scraping**: Collects news from multiple RSS feeds (Reuters, Bloomberg, CNN)
+- **AI-Powered Analysis**: Uses Claude AI to analyze news impact and sentiment
+- **Real-Time Dashboard**: React frontend with real-time data visualization
+- **Market Impact Scoring**: 0-10 scale impact scoring for trading decisions
+- **Backtesting System**: Validates prediction accuracy against historical data
+- **Symbol Tracking**: Monitors major indices (SPY, QQQ, GLD) and futures
+- **Keyword Trending**: Identifies trending topics affecting markets
+
+## Tech Stack
+
+### Backend
+- **Python 3.11+** - Core language
+- **FastAPI** - Async REST API framework
+- **SQLAlchemy + Alembic** - ORM and database migrations
+- **PostgreSQL** - Primary database
+- **Redis** - Caching and task queue
+- **Celery** - Background task processing
+- **Claude AI (Anthropic)** - News analysis
+- **BeautifulSoup + feedparser** - Web scraping
+
+### Frontend
+- **React 18 + TypeScript** - UI framework
+- **Ant Design** - Component library
+- **React Query** - Data fetching and state management
+- **Recharts** - Data visualization
+- **Axios** - HTTP client
+
+### Infrastructure
+- **Docker + Docker Compose** - Containerization
+- **PostgreSQL 15** - Database
+- **Redis 7** - Cache and message broker
+- **Nginx** - Reverse proxy (production)
+
+## Quick Start
+
+### Prerequisites
+- Docker and Docker Compose
+- Python 3.11+ (for local development)
+- Node.js 16+ (for frontend development)
+
+### 1. Clone and Setup
+```bash
+git clone <repository-url>
+cd NewsTrader
+cp backend/.env.example backend/.env
+```
+
+### 2. Configure Environment
+Edit `backend/.env`:
+```env
+# Required: Add your Anthropic API key
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+
+# Database (default works for Docker)
+DATABASE_URL=postgresql://postgres:password@db:5432/newstrader
+
+# Redis (default works for Docker)
+REDIS_URL=redis://redis:6379
+
+# Security (change in production)
+SECRET_KEY=your-super-secret-key-here
+```
+
+### 3. Start with Docker
+```bash
+# Start all services
+docker-compose up -d
+
+# Check logs
+docker-compose logs -f backend
+```
+
+### 4. Access the Application
+- Frontend: http://localhost:3000
+- Backend API: http://localhost:8000
+- API Docs: http://localhost:8000/docs
+
+## Development Setup
+
+### Backend Development
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\\Scripts\\activate
+pip install -r requirements.txt
+
+# Run database migrations
+alembic upgrade head
+
+# Start development server
+uvicorn app.main:app --reload --port 8000
+```
+
+### Frontend Development
+```bash
+cd frontend
+npm install
+npm start
+```
+
+### Run Celery Workers (for background tasks)
+```bash
+cd backend
+celery -A app.celery_app worker --loglevel=info
+celery -A app.celery_app beat --loglevel=info
+```
+
+## API Endpoints
+
+### News
+- `GET /api/v1/news/articles` - Get news articles
+- `GET /api/v1/news/articles/{id}` - Get article details
+- `POST /api/v1/news/scrape` - Manually trigger news scraping
+- `GET /api/v1/news/trending` - Get high-impact news
+
+### Analysis
+- `POST /api/v1/analysis/analyze` - Analyze custom article
+- `GET /api/v1/analysis/market-sentiment` - Get market sentiment for symbol
+- `GET /api/v1/analysis/impact-summary` - Get impact summary for all symbols
+- `GET /api/v1/analysis/keyword-trends` - Get trending keywords
+
+### Backtesting
+- `POST /api/v1/backtest/run/{symbol}` - Run backtest for symbol
+- `GET /api/v1/backtest/results/{symbol}` - Get historical backtest results
+
+## Database Schema
+
+### NewsArticle
+- Article content, metadata, and AI analysis
+- Impact scores, sentiment, affected symbols
+- Claude AI analysis results
+
+### ImpactWeight
+- Predicted vs actual impact tracking
+- Used for model improvement
+
+### BacktestResult
+- Historical prediction accuracy
+- Performance metrics
+
+## Configuration
+
+### Trading Symbols
+Default symbols tracked (configurable in settings):
+- **Indices**: SPY, QQQ
+- **Commodities**: GLD, CL=F, GC=F
+- **Futures**: ES=F, NQ=F
+
+### News Sources
+RSS feeds (configurable):
+- Reuters Business News
+- Bloomberg Markets
+- CNN Money International
+
+### Claude AI Analysis
+- Impact scoring: 0-10 scale
+- Sentiment analysis: -1 to +1 scale
+- Confidence scoring: 0-1 scale
+- Symbol-specific predictions
+
+## Deployment
+
+### Docker Production
+```bash
+# Build and deploy
+docker-compose -f docker-compose.prod.yml up -d
+
+# Use environment-specific configs
+docker-compose -f docker-compose.prod.yml --env-file .env.prod up -d
+```
+
+### AWS Deployment
+1. **EC2 Instance**: Ubuntu 20.04+ with Docker
+2. **RDS PostgreSQL**: Managed database service
+3. **ElastiCache Redis**: Managed Redis service
+4. **Application Load Balancer**: Traffic distribution
+5. **CloudWatch**: Monitoring and logging
+
+## Usage Examples
+
+### Manual News Analysis
+```python
+from app.mcp.claude_client import ClaudeAnalyzer
+
+analyzer = ClaudeAnalyzer()
+result = await analyzer.analyze_news_impact(
+    title="Fed Raises Interest Rates",
+    content="The Federal Reserve announced...",
+    symbols=["SPY", "QQQ", "GLD"]
+)
+```
+
+### Running Backtests
+```bash
+# Via API
+curl -X POST "http://localhost:8000/api/v1/backtest/run/SPY?days_back=30"
+
+# Via Celery task
+from app.celery_app import run_symbol_backtest
+run_symbol_backtest.delay("SPY", 30)
+```
+
+## Monitoring
+
+### Health Checks
+- `GET /health` - Application health
+- Celery task monitoring via Flower (optional)
+- Database connection monitoring
+
+### Metrics
+- News articles processed
+- Analysis accuracy rates
+- API response times
+- Background task completion
+
+## Contributing
+
+1. Fork the repository
+2. Create feature branch: `git checkout -b feature/amazing-feature`
+3. Make changes and test
+4. Commit: `git commit -m 'Add amazing feature'`
+5. Push: `git push origin feature/amazing-feature`
+6. Create Pull Request
+
+## License
+
+This project is licensed under the MIT License - see LICENSE file for details.
+
+## Support
+
+- **Issues**: GitHub Issues
+- **Discussions**: GitHub Discussions
+- **Documentation**: `/docs` directory
+
+## Roadmap
+
+- [ ] WebSocket real-time updates
+- [ ] Advanced backtesting strategies
+- [ ] Machine learning model training
+- [ ] Multi-language news support
+- [ ] Mobile app (React Native)
+- [ ] Email/SMS alerts
+- [ ] Portfolio integration
+- [ ] Options and crypto support
