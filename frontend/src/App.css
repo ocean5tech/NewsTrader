@@ -23,6 +23,12 @@
   color: #61dafb;
 }
 
+/* 新闻标题链接样式 */
+.news-title-link:hover {
+  text-decoration: underline !important;
+  color: #0050b3 !important;
+}
+
 @keyframes App-logo-spin {
   from {
     transform: rotate(0deg);

@@ -1,8 +1,10 @@
 export interface NewsArticle {
   id: string;
   title: string;
+  title_zh?: string;  // 中文标题
   content?: string;
   summary: string;
+  summary_zh?: string;  // 中文摘要
   url: string;
   source: string;
   published_at: string;
@@ -14,6 +16,7 @@ export interface NewsArticle {
   categories?: string[];
   claude_analysis?: any;
   confidence_score: number;
+  news_type?: string;  // 新闻类型（factual等）
 }
 
 export interface MarketSentiment {

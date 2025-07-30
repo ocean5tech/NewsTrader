@@ -5,6 +5,7 @@ import { ReloadOutlined, EyeOutlined, SearchOutlined } from '@ant-design/icons';
 import { newsApi } from '../services/api';
 import { NewsArticle } from '../types';
 import dayjs from 'dayjs';
+import '../App.css';
 
 const { Search } = Input;
 const { Option } = Select;
@@ -74,16 +75,52 @@ const NewsPage: React.FC = () => {
       key: 'title',
       width: 300,
       render: (text: string, record: NewsArticle) => (
-        <Button
-          type="link"
-          onClick={() => {
-            setSelectedArticle(record);
-            setModalVisible(true);
-          }}
-          style={{ textAlign: 'left', padding: 0, height: 'auto', whiteSpace: 'normal' }}
-        >
-          {text}
-        </Button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <a
+            href={record.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ 
+              color: '#1890ff',
+              textDecoration: 'none',
+              fontSize: '14px',
+              fontWeight: 500,
+              lineHeight: '1.4',
+              transition: 'all 0.2s ease'
+            }}
+            className="news-title-link"
+          >
+            {text}
+          </a>
+          {record.title_zh && (
+            <div style={{ 
+              fontSize: '12px', 
+              color: '#666', 
+              marginTop: '2px',
+              fontStyle: 'italic'
+            }}>
+              🌐 {record.title_zh}
+            </div>
+          )}
+          <Button
+            type="text"
+            size="small"
+            onClick={() => {
+              setSelectedArticle(record);
+              setModalVisible(true);
+            }}
+            style={{ 
+              padding: '2px 4px',
+              height: 'auto',
+              fontSize: '12px',
+              color: '#666',
+              textAlign: 'left',
+              justifyContent: 'flex-start'
+            }}
+          >
+            <EyeOutlined /> 查看详情
+          </Button>
+        </div>
       ),
     },
     {
@@ -150,19 +187,65 @@ const NewsPage: React.FC = () => {
       ),
     },
     {
-      title: 'Actions',
-      key: 'actions',
-      width: 80,
-      render: (_: any, record: NewsArticle) => (
-        <Button
-          type="text"
-          icon={<EyeOutlined />}
-          onClick={() => {
-            setSelectedArticle(record);
-            setModalVisible(true);
-          }}
-        />
-      ),
+      title: '结论',
+      key: 'conclusion',
+      width: 150,
+      render: (_: any, record: NewsArticle) => {
+        const getInvestmentConclusion = (article: NewsArticle) => {
+          const { sentiment_score, affected_symbols, impact_score } = article;
+          
+          if (!affected_symbols || affected_symbols.length === 0) {
+            return { text: '无明确影响', color: '#999' };
+          }
+          
+          // 根据情感和影响评分判断
+          if (sentiment_score > 0.1 && impact_score > 6) {
+            return { 
+              text: `利好 ${affected_symbols[0]}`, 
+              color: '#52c41a' 
+            };
+          } else if (sentiment_score < -0.1 && impact_score > 6) {
+            return { 
+              text: `利空 ${affected_symbols[0]}`, 
+              color: '#ff4d4f' 
+            };
+          } else if (impact_score > 7) {
+            return { 
+              text: `关注 ${affected_symbols[0]}`, 
+              color: '#1890ff' 
+            };
+          } else {
+            return { 
+              text: `中性 ${affected_symbols[0]}`, 
+              color: '#999' 
+            };
+          }
+        };
+        
+        const conclusion = getInvestmentConclusion(record);
+        
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <Tag color={conclusion.color === '#52c41a' ? 'green' : 
+                       conclusion.color === '#ff4d4f' ? 'red' : 
+                       conclusion.color === '#1890ff' ? 'blue' : 'default'}>
+              {conclusion.text}
+            </Tag>
+            <Button
+              type="text"
+              size="small"
+              icon={<EyeOutlined />}
+              onClick={() => {
+                setSelectedArticle(record);
+                setModalVisible(true);
+              }}
+              style={{ fontSize: '12px', padding: '2px 4px' }}
+            >
+              详情
+            </Button>
+          </div>
+        );
+      },
     },
   ];
 
@@ -263,8 +346,8 @@ const NewsPage: React.FC = () => {
               </Space>
             </Space>
             
-            <Title level={4}>Summary</Title>
-            <Paragraph>{detailedArticle.summary}</Paragraph>
+            <Title level={4}>Summary (中文)</Title>
+            <Paragraph>{detailedArticle.summary_zh}</Paragraph>
             
             {detailedArticle.content && (
               <>
