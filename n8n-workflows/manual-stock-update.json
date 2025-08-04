@@ -1,0 +1,208 @@
+{
+  "name": "Manual Stock Data Update",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "手动触发",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "operation",
+              "value": "stock_update"
+            },
+            {
+              "name": "initiated_by",
+              "value": "manual"
+            },
+            {
+              "name": "start_time",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "init-update-process",
+      "name": "初始化更新流程",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [
+        400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://localhost:8000/health",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "check-api-health",
+      "name": "检查API健康状态",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/api/v1/stocks/update",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "execute-stock-update",
+      "name": "执行股票数据更新",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 处理更新结果并进行详细分析\nconst healthResponse = $('check-api-health').first().json;\nconst updateResponse = $input.first().json;\nconst startTime = $('init-update-process').first().json.start_time;\n\nconst endTime = new Date().toISOString();\nconst duration = Math.round((new Date(endTime) - new Date(startTime)) / 1000);\n\n// 分析API健康状态\nconst apiHealthy = healthResponse && (healthResponse.status === 'ok' || healthResponse.status === 'healthy');\n\n// 分析更新结果\nlet updateStatus = 'unknown';\nlet summary = '';\nlet recommendations = [];\n\nif (updateResponse && typeof updateResponse === 'object') {\n  const { added = 0, updated = 0, total = 0, message = '' } = updateResponse;\n  \n  if (total > 0) {\n    updateStatus = 'success';\n    summary = `✅ 股票数据更新成功！\\n` +\n              `📊 统计信息:\\n` +\n              `  - 新增股票: ${added} 只\\n` +\n              `  - 更新股票: ${updated} 只\\n` +\n              `  - 处理总数: ${total} 只\\n` +\n              `⏱️ 执行时间: ${duration} 秒`;\n    \n    // 生成建议\n    if (added > 100) {\n      recommendations.push('🆕 发现大量新股票，建议检查是否有新上市股票');\n    }\n    if (updated > total * 0.8) {\n      recommendations.push('🔄 大部分股票信息已更新，数据源活跃');\n    }\n    if (total < 3000) {\n      recommendations.push('⚠️ 股票总数较少，可能存在数据获取问题');\n    }\n  } else {\n    updateStatus = 'warning';\n    summary = `⚠️ 股票数据更新完成，但没有变化\\n` +\n              `⏱️ 执行时间: ${duration} 秒`;\n    recommendations.push('🔍 建议检查数据源是否正常');\n  }\n} else {\n  updateStatus = 'error';\n  summary = `❌ 股票数据更新失败！\\n` +\n            `⏱️ 执行时间: ${duration} 秒\\n` +\n            `🐛 错误信息: ${JSON.stringify(updateResponse)}`;\n  recommendations.push('🚨 需要检查API接口和数据源连接');\n  recommendations.push('📋 查看后端日志获取详细错误信息');\n}\n\n// 添加API健康状态到摘要\nif (!apiHealthy) {\n  summary += `\\n⚠️ API健康检查异常: ${JSON.stringify(healthResponse)}`;\n  recommendations.push('🏥 检查后端服务健康状态');\n}\n\nconsole.log(`Manual stock update completed: ${updateStatus}`);\nconsole.log(summary);\n\nreturn {\n  json: {\n    operation: 'manual_stock_update',\n    status: updateStatus,\n    api_healthy: apiHealthy,\n    summary: summary,\n    recommendations: recommendations,\n    timing: {\n      start_time: startTime,\n      end_time: endTime,\n      duration_seconds: duration\n    },\n    data: {\n      added: updateResponse?.added || 0,\n      updated: updateResponse?.updated || 0,\n      total: updateResponse?.total || 0\n    },\n    raw_responses: {\n      health_check: healthResponse,\n      update_result: updateResponse\n    }\n  }\n};"
+      },
+      "id": "analyze-results",
+      "name": "分析更新结果",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 执行数据验证测试\nconst testSymbols = {\n  '平安银行': '000001',\n  '万科A': '000002', \n  '浦发银行': '600000',\n  '特锐德': '300001',\n  '中国石油': '601857',\n  '贵州茅台': '600519'\n};\n\nconst validationResults = [];\nlet successCount = 0;\n\nfor (const [name, symbol] of Object.entries(testSymbols)) {\n  try {\n    const response = await this.helpers.httpRequest({\n      method: 'GET',\n      url: `http://localhost:8000/api/v1/stocks/${symbol}`,\n      headers: {\n        'Accept': 'application/json'\n      },\n      timeout: 5000\n    });\n    \n    if (response && response.symbol === symbol) {\n      validationResults.push({\n        expected_name: name,\n        symbol: symbol,\n        actual_name: response.name,\n        status: '✅ 成功',\n        pinyin_short: response.name_pinyin_short,\n        exchange: response.exchange,\n        market: response.market\n      });\n      successCount++;\n    } else {\n      validationResults.push({\n        expected_name: name,\n        symbol: symbol,\n        status: '❌ 数据异常',\n        error: '返回数据不匹配'\n      });\n    }\n  } catch (error) {\n    validationResults.push({\n      expected_name: name,\n      symbol: symbol,\n      status: '❌ 请求失败',\n      error: error.message\n    });\n  }\n  \n  // 避免请求过快\n  await new Promise(resolve => setTimeout(resolve, 200));\n}\n\n// 测试搜索功能\nconst searchTests = [\n  { query: '000001', type: '股票代码' },\n  { query: 'PAYH', type: '拼音首字母' },\n  { query: '平安', type: '股票名称' }\n];\n\nconst searchResults = [];\n\nfor (const test of searchTests) {\n  try {\n    const response = await this.helpers.httpRequest({\n      method: 'GET',\n      url: `http://localhost:8000/api/v1/stocks/search?q=${encodeURIComponent(test.query)}&limit=5`,\n      headers: {\n        'Accept': 'application/json'\n      },\n      timeout: 5000\n    });\n    \n    if (response && response.results && Array.isArray(response.results)) {\n      searchResults.push({\n        query: test.query,\n        type: test.type,\n        status: '✅ 成功',\n        result_count: response.results.length,\n        first_result: response.results[0]?.name || 'N/A'\n      });\n    } else {\n      searchResults.push({\n        query: test.query,\n        type: test.type,\n        status: '❌ 无结果',\n        result_count: 0\n      });\n    }\n  } catch (error) {\n    searchResults.push({\n      query: test.query,\n      type: test.type,\n      status: '❌ 请求失败',\n      error: error.message\n    });\n  }\n  \n  await new Promise(resolve => setTimeout(resolve, 200));\n}\n\nconst validationScore = Math.round((successCount / Object.keys(testSymbols).length) * 100);\nconst searchScore = Math.round((searchResults.filter(r => r.status.includes('成功')).length / searchTests.length) * 100);\nconst overallScore = Math.round((validationScore + searchScore) / 2);\n\nconsole.log(`Data validation completed: ${successCount}/${Object.keys(testSymbols).length} stocks verified`);\nconsole.log(`Search validation completed: ${searchScore}% success rate`);\n\nreturn {\n  json: {\n    validation_summary: {\n      overall_score: overallScore,\n      stock_data_score: validationScore,\n      search_function_score: searchScore,\n      total_tests: Object.keys(testSymbols).length + searchTests.length\n    },\n    stock_validation: {\n      success_count: successCount,\n      total_tested: Object.keys(testSymbols).length,\n      results: validationResults\n    },\n    search_validation: {\n      success_count: searchResults.filter(r => r.status.includes('成功')).length,\n      total_tested: searchTests.length,\n      results: searchResults\n    },\n    validation_time: new Date().toISOString()\n  }\n};"
+      },
+      "id": "validate-data-quality",
+      "name": "验证数据质量",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 生成最终报告\nconst updateResult = $('analyze-results').first().json;\nconst validationResult = $input.first().json;\n\nconst reportTime = new Date().toLocaleString('zh-CN', {\n  timeZone: 'Asia/Shanghai',\n  year: 'numeric',\n  month: '2-digit', \n  day: '2-digit',\n  hour: '2-digit',\n  minute: '2-digit',\n  second: '2-digit'\n});\n\n// 构建详细报告\nlet report = `📈 NewsTrader 股票数据更新报告\\n`;\nreport += `🕐 执行时间: ${reportTime}\\n`;\nreport += `⚡ 执行方式: 手动触发\\n\\n`;\n\n// 更新结果摘要\nreport += `📊 数据更新结果:\\n`;\nreport += updateResult.summary + '\\n\\n';\n\n// 数据质量验证\nreport += `🔍 数据质量验证:\\n`;\nreport += `  - 综合评分: ${validationResult.validation_summary.overall_score}/100\\n`;\nreport += `  - 股票数据: ${validationResult.validation_summary.stock_data_score}/100\\n`;\nreport += `  - 搜索功能: ${validationResult.validation_summary.search_function_score}/100\\n\\n`;\n\n// 详细验证结果\nreport += `📋 详细验证结果:\\n`;\nvalidationResult.stock_validation.results.forEach((result, index) => {\n  report += `  ${index + 1}. ${result.expected_name} (${result.symbol}): ${result.status}\\n`;\n  if (result.actual_name && result.pinyin_short) {\n    report += `     名称: ${result.actual_name}, 拼音: ${result.pinyin_short}\\n`;\n  }\n});\n\nreport += '\\n🔎 搜索功能测试:\\n';\nvalidationResult.search_validation.results.forEach((result, index) => {\n  report += `  ${index + 1}. ${result.type}搜索 \"${result.query}\": ${result.status}`;\n  if (result.result_count > 0) {\n    report += ` (找到${result.result_count}个结果)`;\n  }\n  report += '\\n';\n});\n\n// 建议和警告\nif (updateResult.recommendations && updateResult.recommendations.length > 0) {\n  report += '\\n💡 建议:\\n';\n  updateResult.recommendations.forEach((rec, index) => {\n    report += `  ${index + 1}. ${rec}\\n`;\n  });\n}\n\n// 系统状态\nreport += '\\n🏥 系统状态:\\n';\nreport += `  - API服务: ${updateResult.api_healthy ? '✅ 正常' : '❌ 异常'}\\n`;\nreport += `  - 数据库连接: ${validationResult.validation_summary.overall_score > 50 ? '✅ 正常' : '❌ 异常'}\\n`;\n\n// 下次更新提醒\nreport += '\\n📅 下次自动更新: 每周日凌晨2:00\\n';\nreport += '🔧 手动更新: 访问 n8n 界面执行此工作流\\n';\n\nconsole.log('='.repeat(60));\nconsole.log('NewsTrader 股票数据更新报告');\nconsole.log('='.repeat(60));\nconsole.log(report);\nconsole.log('='.repeat(60));\n\nreturn {\n  json: {\n    report_type: 'manual_stock_update_complete',\n    execution_time: reportTime,\n    update_status: updateResult.status,\n    validation_score: validationResult.validation_summary.overall_score,\n    detailed_report: report,\n    summary: {\n      stocks_processed: updateResult.data.total,\n      execution_duration: updateResult.timing.duration_seconds,\n      api_healthy: updateResult.api_healthy,\n      data_quality_score: validationResult.validation_summary.overall_score\n    }\n  }\n};"
+      },
+      "id": "generate-final-report",
+      "name": "生成最终报告",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "手动触发": {
+      "main": [
+        [
+          {
+            "node": "初始化更新流程",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "初始化更新流程": {
+      "main": [
+        [
+          {
+            "node": "检查API健康状态",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "检查API健康状态": {
+      "main": [
+        [
+          {
+            "node": "执行股票数据更新",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "执行股票数据更新": {
+      "main": [
+        [
+          {
+            "node": "分析更新结果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "分析更新结果": {
+      "main": [
+        [
+          {
+            "node": "验证数据质量",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "验证数据质量": {
+      "main": [
+        [
+          {
+            "node": "生成最终报告",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["stocks", "manual", "testing", "validation"],
+  "triggerCount": 0,
+  "updatedAt": "2025-08-01T10:45:00.000Z",
+  "versionId": "1"
+}

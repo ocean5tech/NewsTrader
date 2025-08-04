@@ -7,6 +7,8 @@ import NewsPage from './pages/NewsPage';
 import AnalysisPage from './pages/AnalysisPage';
 import BacktestPage from './pages/BacktestPage';
 import SmartAnalysisPage from './pages/SmartAnalysisPage';
+import WatchlistPage from './pages/WatchlistPage';
+import TradingAdvicePage from './pages/TradingAdvicePage';
 import Navigation from './components/Navigation';
 import './App.css';
 
@@ -25,6 +27,8 @@ const App: React.FC = () => {
             <Route path="/news" element={<NewsPage />} />
             <Route path="/analysis" element={<AnalysisPage />} />
             <Route path="/smart-analysis" element={<SmartAnalysisPage />} />
+            <Route path="/watchlist" element={<WatchlistPage />} />
+            <Route path="/trading-advice" element={<TradingAdvicePage />} />
             <Route path="/backtest" element={<BacktestPage />} />
           </Routes>
         </Content>

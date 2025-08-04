@@ -11,8 +11,12 @@ logger = logging.getLogger(__name__)
 
 
 class NewsScraperService:
-    def __init__(self):
-        self.sources = settings.NEWS_SOURCES
+    def __init__(self, use_chinese_sources=True):
+        # Use Chinese sources for better local market coverage
+        if use_chinese_sources:
+            self.sources = settings.CHINESE_NEWS_SOURCES + settings.NEWS_SOURCES
+        else:
+            self.sources = settings.NEWS_SOURCES
         self.session = None
     
     async def __aenter__(self):
@@ -154,7 +158,8 @@ class NewsScraperService:
     
     def is_trading_relevant(self, text: str) -> bool:
         """Check if content is relevant to trading/markets"""
-        trading_keywords = [
+        # English keywords
+        english_keywords = [
             'stock', 'stocks', 'market', 'markets', 'trading', 'trader',
             'investment', 'investor', 'futures', 'commodities', 'forex',
             'earnings', 'revenue', 'profit', 'loss', 'price', 'rates',
@@ -164,8 +169,21 @@ class NewsScraperService:
             'nasdaq', 'dow', 's&p', 'sp500', 'russell'
         ]
         
+        # Chinese keywords from settings
+        chinese_keywords = settings.CHINESE_MARKET_KEYWORDS
+        
+        # Additional common Chinese trading terms
+        extra_chinese_keywords = [
+            '股票', '股市', '证券', '基金', '期货', '外汇', '投资', '交易',
+            '涨跌', '涨停', '跌停', '买入', '卖出', '持仓', '开盘', '收盘',
+            '成交量', '市值', '估值', 'PE', 'PB', '分红', '配股', '增发',
+            '财报', '业绩', '营收', '利润', '亏损', '股价', '汇率'
+        ]
+        
+        all_keywords = english_keywords + chinese_keywords + extra_chinese_keywords
         text_lower = text.lower()
-        return any(keyword in text_lower for keyword in trading_keywords)
+        
+        return any(keyword.lower() in text_lower for keyword in all_keywords)
     
     def extract_source_name(self, url: str) -> str:
         """Extract source name from URL"""

@@ -1,0 +1,456 @@
+{
+  "name": "NewsTrader Chinese News Scraper",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://rss.sina.com.cn/roll/finance/hot_roll.xml",
+        "options": {
+          "headers": {
+            "User-Agent": "NewsTrader/1.0 (Chinese News Bot)"
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "sina-finance-rss",
+      "name": "新浪财经热点",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        400,
+        150
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://rss.sina.com.cn/news/allnews/finance.xml",
+        "options": {
+          "headers": {
+            "User-Agent": "NewsTrader/1.0 (Chinese News Bot)"
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "sina-finance-all",
+      "name": "新浪财经综合",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        400,
+        250
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://rss.sina.com.cn/roll/stock/hot_roll.xml",
+        "options": {
+          "headers": {
+            "User-Agent": "NewsTrader/1.0 (Chinese News Bot)"
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "sina-stock-rss",
+      "name": "新浪股票热点",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        400,
+        350
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://rsshub.app/yicai/headline",
+        "options": {
+          "headers": {
+            "User-Agent": "NewsTrader/1.0 (Chinese News Bot)"
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "yicai-headlines",
+      "name": "第一财经头条",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        400,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://rsshub.app/caixin/latest",
+        "options": {
+          "headers": {
+            "User-Agent": "NewsTrader/1.0 (Chinese News Bot)"
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "caixin-latest",
+      "name": "财新网最新",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        400,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 处理中文RSS新闻源\nconst allArticles = [];\n\n// 中文交易相关关键词\nconst chineseKeywords = [\n  '股票', '股市', '证券', '基金', '期货', '外汇', '投资', '交易',\n  'A股', '港股', '沪深', '上证', '深证', '创业板', '科创板',\n  '央行', '货币政策', '利率', '准备金率', 'GDP', 'CPI', 'PPI', 'PMI',\n  '涨跌', '涨停', '跌停', '买入', '卖出', '开盘', '收盘',\n  '财报', '业绩', '营收', '利润', '亏损', '股价', '汇率',\n  '房地产', '新能源', '芯片', '医药', '白酒', '银行', '保险',\n  '原油', '黄金', '白银', '铜', '大豆', '玉米', '中美', '贸易'\n];\n\n// 英文关键词\nconst englishKeywords = [\n  'stock', 'market', 'trading', 'investment', 'earnings', 'revenue',\n  'fed', 'federal reserve', 'inflation', 'gdp', 'economy', 'nasdaq', \n  'dow', 'sp500', 's&p', 'yuan', 'rmb', 'pboc'\n];\n\nconst allKeywords = [...chineseKeywords, ...englishKeywords];\n\n// 处理每个RSS源的响应\nfor (const item of $input.all()) {\n  try {\n    const xmlData = item.json.data || item.json;\n    \n    // 解析RSS XML - 支持中文内容\n    const parser = require('xml2js');\n    \n    // 简单的正则解析方式\n    const itemPattern = /<item[^>]*>([\\s\\S]*?)<\\/item>/g;\n    const items = xmlData.match(itemPattern) || [];\n    \n    for (let i = 0; i < Math.min(items.length, 20); i++) {\n      const itemXml = items[i];\n      \n      // 提取标题\n      const titleMatch = itemXml.match(/<title[^>]*><!\\[CDATA\\[([^\\]]+)\\]\\]><\\/title>|<title[^>]*>([^<]+)<\\/title>/);\n      const title = titleMatch ? (titleMatch[1] || titleMatch[2] || '').trim() : '';\n      \n      // 提取链接\n      const linkMatch = itemXml.match(/<link[^>]*><!\\[CDATA\\[([^\\]]+)\\]\\]><\\/link>|<link[^>]*>([^<]+)<\\/link>/);\n      const link = linkMatch ? (linkMatch[1] || linkMatch[2] || '').trim() : '';\n      \n      // 提取描述\n      const descMatch = itemXml.match(/<description[^>]*><!\\[CDATA\\[([^\\]]+)\\]\\]><\\/description>|<description[^>]*>([^<]+)<\\/description>/);\n      const description = descMatch ? (descMatch[1] || descMatch[2] || '').replace(/<[^>]+>/g, '').trim() : '';\n      \n      // 提取发布时间\n      const dateMatch = itemXml.match(/<pubDate[^>]*>([^<]+)<\\/pubDate>/);\n      const pubDate = dateMatch ? dateMatch[1].trim() : '';\n      \n      if (title && link && title.length > 5) {\n        // 检查是否包含交易相关关键词\n        const content = title + ' ' + description;\n        const isRelevant = allKeywords.some(keyword => {\n          return content.toLowerCase().includes(keyword.toLowerCase()) ||\n                 content.includes(keyword);\n        });\n        \n        if (isRelevant) {\n          // 计算置信度评分\n          let relevanceScore = 0;\n          let keywordMatches = 0;\n          \n          for (const keyword of allKeywords) {\n            if (content.toLowerCase().includes(keyword.toLowerCase()) || content.includes(keyword)) {\n              keywordMatches++;\n              // 中文关键词权重更高\n              relevanceScore += chineseKeywords.includes(keyword) ? 1.5 : 1.0;\n            }\n          }\n          \n          // 标题匹配加分\n          if (allKeywords.some(k => title.toLowerCase().includes(k.toLowerCase()) || title.includes(k))) {\n            relevanceScore += 2;\n          }\n          \n          // 规范化评分到0-10\n          relevanceScore = Math.min(10, Math.max(1, relevanceScore));\n          \n          allArticles.push({\n            title: title,\n            url: link,\n            summary: description,\n            published_at: pubDate,\n            source: item.json.url || 'Chinese RSS Feed',\n            relevance_score: relevanceScore,\n            keyword_matches: keywordMatches,\n            language: 'zh-CN',\n            extracted_at: new Date().toISOString()\n          });\n        }\n      }\n    }\n  } catch (error) {\n    console.log('Error parsing Chinese RSS:', error.message);\n  }\n}\n\n// 去重处理 - 基于URL和标题相似度\nconst uniqueArticles = [];\nconst seenUrls = new Set();\nconst seenTitles = new Set();\n\nfor (const article of allArticles) {\n  // URL去重\n  if (seenUrls.has(article.url)) continue;\n  \n  // 标题相似度去重（简单版本）\n  let isDuplicate = false;\n  for (const seenTitle of seenTitles) {\n    if (article.title.length > 10 && seenTitle.length > 10) {\n      // 检查标题相似度\n      const similarity = article.title.length > seenTitle.length ? \n        seenTitle.length / article.title.length : \n        article.title.length / seenTitle.length;\n      \n      if (similarity > 0.8 && (article.title.includes(seenTitle.substring(0, 10)) || seenTitle.includes(article.title.substring(0, 10)))) {\n        isDuplicate = true;\n        break;\n      }\n    }\n  }\n  \n  if (!isDuplicate) {\n    seenUrls.add(article.url);\n    seenTitles.add(article.title);\n    uniqueArticles.push(article);\n  }\n}\n\n// 按相关性评分排序\nuniqueArticles.sort((a, b) => b.relevance_score - a.relevance_score);\n\nconsole.log(`Processed ${uniqueArticles.length} unique Chinese articles`);\n\nreturn uniqueArticles.map(article => ({ json: article }));"
+      },
+      "id": "process-chinese-rss",
+      "name": "处理中文RSS数据",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        650,
+        350
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition1",
+              "leftValue": "={{ $json.relevance_score }}",
+              "rightValue": 4,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            },
+            {
+              "id": "condition2",
+              "leftValue": "={{ $json.keyword_matches }}",
+              "rightValue": 2,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "filter-high-relevance",
+      "name": "筛选高相关性新闻",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        850,
+        350
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/api/v1/news/articles",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "title",
+              "value": "={{ $json.title }}"
+            },
+            {
+              "name": "url", 
+              "value": "={{ $json.url }}"
+            },
+            {
+              "name": "summary",
+              "value": "={{ $json.summary }}"
+            },
+            {
+              "name": "source",
+              "value": "={{ $json.source }}"
+            },
+            {
+              "name": "published_at",
+              "value": "={{ $json.published_at }}"
+            },
+            {
+              "name": "relevance_score",
+              "value": "={{ $json.relevance_score }}"
+            },
+            {
+              "name": "language",
+              "value": "={{ $json.language }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "save-to-api",
+      "name": "保存到NewsTrader API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1050,
+        250
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/api/v1/analysis/smart/analyze",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "title",
+              "value": "={{ $json.title }}"
+            },
+            {
+              "name": "content",
+              "value": "={{ $json.summary }}"
+            },
+            {
+              "name": "url",
+              "value": "={{ $json.url }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "trigger-chinese-analysis",
+      "name": "触发中文新闻分析",
+      "type": "n8n-nodes-base.httpRequest", 
+      "typeVersion": 4.1,
+      "position": [
+        1050,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "values": {
+          "number": [
+            {
+              "name": "processed_articles",
+              "value": "={{ $json.length }}"
+            }
+          ],
+          "string": [
+            {
+              "name": "execution_time",
+              "value": "={{ new Date().toISOString() }}"
+            },
+            {
+              "name": "workflow_status",
+              "value": "completed"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "summary-node",
+      "name": "执行总结",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [
+        1250,
+        350
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "新浪财经热点",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "新浪财经综合",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "新浪股票热点",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "第一财经头条",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "财新网最新",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "新浪财经热点": {
+      "main": [
+        [
+          {
+            "node": "处理中文RSS数据",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "新浪财经综合": {
+      "main": [
+        [
+          {
+            "node": "处理中文RSS数据",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "新浪股票热点": {
+      "main": [
+        [
+          {
+            "node": "处理中文RSS数据",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "第一财经头条": {
+      "main": [
+        [
+          {
+            "node": "处理中文RSS数据",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "财新网最新": {
+      "main": [
+        [
+          {
+            "node": "处理中文RSS数据",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "处理中文RSS数据": {
+      "main": [
+        [
+          {
+            "node": "筛选高相关性新闻",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "筛选高相关性新闻": {
+      "main": [
+        [
+          {
+            "node": "保存到NewsTrader API",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "触发中文新闻分析",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "保存到NewsTrader API": {
+      "main": [
+        [
+          {
+            "node": "执行总结",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "触发中文新闻分析": {
+      "main": [
+        [
+          {
+            "node": "执行总结",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["chinese", "finance", "news", "automation"],
+  "triggerCount": 0,
+  "updatedAt": "2025-08-01T10:00:00.000Z",
+  "versionId": "2"
+}

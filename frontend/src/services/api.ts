@@ -1,11 +1,17 @@
 import axios from 'axios';
 import { NewsArticle, MarketSentiment, ImpactSummary, BacktestResult, KeywordTrend } from '../types';
 
+// 使用完整URL避免代理问题
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 const api = axios.create({
   baseURL: `${API_BASE_URL}/api/v1`,
-  timeout: 30000,
+  timeout: 90000, // 增加到90秒以适应RSS抓取时间
+  headers: {
+    'Cache-Control': 'no-cache',
+    'Accept': 'application/json',
+    'Content-Type': 'application/json',
+  },
 });
 
 // News API

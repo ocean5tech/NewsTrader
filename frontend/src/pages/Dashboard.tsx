@@ -5,6 +5,8 @@ import { ReloadOutlined, RiseOutlined, FallOutlined, FileTextOutlined, BarChartO
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
 import { newsApi, analysisApi } from '../services/api';
 import { ImpactSummary } from '../types';
+import RealTimePrices from '../components/RealTimePrices';
+import SystemStats from '../components/SystemStats';
 
 const Dashboard: React.FC = () => {
   const {
@@ -94,8 +96,18 @@ const Dashboard: React.FC = () => {
       </Row>
 
       <Row gutter={[16, 16]}>
+        {/* Real-time Prices */}
+        <Col xs={24} lg={8}>
+          <RealTimePrices />
+        </Col>
+
+        {/* System Stats */}
+        <Col xs={24} lg={8}>
+          <SystemStats />
+        </Col>
+
         {/* Impact Chart */}
-        <Col xs={24} lg={12}>
+        <Col xs={24} lg={8}>
           <Card title="Symbol Impact Analysis" loading={impactLoading}>
             {impactData?.summary && (
               <ResponsiveContainer width="100%" height={300}>
@@ -110,7 +122,9 @@ const Dashboard: React.FC = () => {
             )}
           </Card>
         </Col>
+      </Row>
 
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         {/* Sentiment Chart */}
         <Col xs={24} lg={12}>
           <Card title="Sentiment Trends" loading={impactLoading}>

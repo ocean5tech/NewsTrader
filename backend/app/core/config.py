@@ -27,13 +27,31 @@ class Settings(BaseSettings):
         "https://rss.cnn.com/rss/money_news_international.rss",
     ]
     
-    # News Sources - Chinese Financial
+    # News Sources - Chinese Financial (Real RSS Feeds)
     CHINESE_NEWS_SOURCES: List[str] = [
-        "https://feed.sina.com.cn/api/roll/get?pageid=153&lid=1686&k=&num=50&page=1",  # 新浪财经
-        "https://rss.36kr.com/feed",  # 36氪
-        "https://wallstreetcn.com/feed",  # 华尔街见闻
-        "https://www.jiemian.com/lists/426.html",  # 界面新闻财经
-        "https://finance.sina.com.cn/roll/index.d.html?cid=56588",  # 新浪财经滚动
+        # 新浪财经 - Direct RSS feeds
+        "http://rss.sina.com.cn/roll/finance/hot_roll.xml",  # 财经热点
+        "http://rss.sina.com.cn/news/allnews/finance.xml",   # 财经综合
+        "http://rss.sina.com.cn/roll/stock/hot_roll.xml",    # 股票热点
+        "http://rss.sina.com.cn/finance/fund.xml",           # 基金新闻
+        "http://rss.sina.com.cn/finance/usstock.xml",        # 美股新闻
+        "http://rss.sina.com.cn/finance/hkstock.xml",        # 港股新闻
+        "http://rss.sina.com.cn/finance/future.xml",         # 期货新闻
+        
+        # 网易财经
+        "http://money.163.com/special/00251HOG/zqschzk.xml", # 证券财经
+        "http://money.163.com/special/00251HO9/read_zqsb.xml", # 证券时报
+        
+        # 第一财经 (通过RSSHub)
+        "https://rsshub.app/yicai/headline",                 # 第一财经头条
+        "https://rsshub.app/yicai/latest",                   # 第一财经最新
+        
+        # 财新网 (通过RSSHub)
+        "https://rsshub.app/caixin/latest",                  # 财新最新
+        
+        # 东方财富 (通过RSSHub)
+        "https://rsshub.app/eastmoney/report/strategyreport", # 策略报告
+        "https://rsshub.app/eastmoney/report/industry",       # 行业报告
     ]
     
     # Trading symbols to monitor - Extended for Chinese markets

@@ -1,8 +1,10 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import os
+import asyncio
 import feedparser
 import hashlib
+import random
 from datetime import datetime, timezone
 from typing import List, Dict, Any
 from dotenv import load_dotenv
@@ -444,6 +446,9 @@ def translate_to_chinese(text: str) -> str:
             }]
         )
         
+        # 更新API调用统计
+        _stats["claude_api_calls"] += 1
+        
         translation = message.content[0].text.strip()
         return translation if translation else text
         
@@ -542,12 +547,9 @@ def get_chinese_translation(title: str, summary: str = "") -> dict:
         "summary_zh": translate_to_chinese(summary) if summary else ""
     }
 
-@app.get("/api/v1/news/articles")
-async def get_articles(limit: int = Query(20, ge=1, le=100)):
-    """获取实时新闻文章 - 临时返回示例数据"""
-    # 由于RSS抓取超时问题，临时返回示例数据
-    print("📰 返回示例新闻数据")
-    all_articles = [
+def get_sample_articles(limit: int = 20):
+    """返回示例新闻数据作为后备"""
+    sample_articles = [
         {
             "id": "sample-1",
             "title": "Federal Reserve Maintains Interest Rates at Current Level",
@@ -556,7 +558,7 @@ async def get_articles(limit: int = Query(20, ge=1, le=100)):
             "summary_zh": "美联储在最新会议中决定保持利率不变，理由是经济稳定性考虑。",
             "url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary.htm",
             "source": "Federal Reserve",
-            "published_at": "2025-07-30T10:00:00Z",
+            "published_at": "2025-07-31T10:00:00Z",
             "impact_score": 7.5,
             "sentiment_score": 0.0,
             "affected_symbols": ["SPY", "TLT", "DXY"],
@@ -564,75 +566,274 @@ async def get_articles(limit: int = Query(20, ge=1, le=100)):
             "news_type": "factual"
         },
         {
-            "id": "sample-2", 
+            "id": "sample-2",
             "title": "Tech Stocks Rally on Strong Quarterly Earnings",
             "title_zh": "科技股因强劲季度财报而上涨",
             "summary": "Major technology companies posted better-than-expected quarterly earnings, driving sector gains.",
             "summary_zh": "主要科技公司公布了超出预期的季度财报，推动板块上涨。",
             "url": "https://www.nasdaq.com/market-activity/stocks",
             "source": "NASDAQ",
-            "published_at": "2025-07-30T09:30:00Z",
+            "published_at": "2025-07-31T09:30:00Z",
             "impact_score": 6.2,
             "sentiment_score": 0.3,
             "affected_symbols": ["QQQ", "AAPL", "MSFT"],
             "confidence_score": 0.78,
             "news_type": "factual"
-        },
-        {
-            "id": "sample-3",
-            "title": "Oil Prices Rise on Supply Concerns",
-            "title_zh": "石油价格因供应担忧而上涨",
-            "summary": "Crude oil prices increased following reports of potential supply disruptions in key producing regions.",
-            "summary_zh": "原油价格在主要产油地区可能出现供应中断的报告后上涨。",
-            "url": "https://www.reuters.com/business/energy/",
-            "source": "Reuters",
-            "published_at": "2025-07-30T08:45:00Z",
-            "impact_score": 6.8,
-            "sentiment_score": 0.2,
-            "affected_symbols": ["CL=F", "XLE", "CVX"],
-            "confidence_score": 0.73,
-            "news_type": "factual"
-        },
-        {
-            "id": "sample-4",
-            "title": "European Central Bank Signals Policy Changes",
-            "title_zh": "欧洲央行发出政策变化信号",
-            "summary": "The ECB indicated potential adjustments to monetary policy in response to evolving economic conditions.",
-            "summary_zh": "欧央行表示可能根据不断变化的经济状况调整货币政策。",
-            "url": "https://www.ecb.europa.eu/press/pr/date/2025/html/",
-            "source": "ECB",
-            "published_at": "2025-07-30T08:00:00Z",
-            "impact_score": 7.2,
-            "sentiment_score": -0.1,
-            "affected_symbols": ["EURUSD", "EFA", "VGK"],
-            "confidence_score": 0.82,
-            "news_type": "factual"
-        },
-        {
-            "id": "sample-5",
-            "title": "Gold Reaches New High Amid Market Uncertainty",
-            "title_zh": "黄金在市场不确定性中创新高",
-            "summary": "Gold prices hit record levels as investors seek safe-haven assets during volatile market conditions.",
-            "summary_zh": "在市场波动期间，投资者寻求避险资产，黄金价格创历史新高。",
-            "url": "https://www.bloomberg.com/markets/commodities",
-            "source": "Bloomberg",
-            "published_at": "2025-07-30T07:30:00Z",
-            "impact_score": 6.5,
-            "sentiment_score": 0.0,
-            "affected_symbols": ["GLD", "GC=F", "GOLD"],
-            "confidence_score": 0.76,
-            "news_type": "factual"
         }
     ]
+    return sample_articles[:limit]
+
+# 全局变量
+_news_cache = {"data": None, "timestamp": 0}
+CACHE_DURATION = 300  # 5分钟缓存
+
+# 统计变量
+_stats = {
+    "news_sources": {},  # 各信源获取的新闻数量
+    "claude_api_calls": 0,  # Claude API调用次数
+    "last_update": None,  # 最后更新时间
+    "total_articles": 0,  # 总新闻数
+}
+
+# 完整的交易品种数据库
+TRADING_SYMBOLS_DATABASE = {
+    # 美国股票ETF
+    "SPY": {"name": "SPDR S&P 500 ETF", "category": "美国ETF", "keywords": ["标普500", "s&p", "spy"]},
+    "QQQ": {"name": "Invesco QQQ ETF", "category": "美国ETF", "keywords": ["纳斯达克", "nasdaq", "qqq", "科技"]},
+    "IWM": {"name": "iShares Russell 2000 ETF", "category": "美国ETF", "keywords": ["罗素2000", "小盘股"]},
+    "GLD": {"name": "SPDR Gold Shares", "category": "贵金属ETF", "keywords": ["黄金", "gold", "贵金属"]},
+    "SLV": {"name": "iShares Silver Trust", "category": "贵金属ETF", "keywords": ["白银", "silver"]},
     
-    return all_articles[:limit]
+    # 美国个股
+    "AAPL": {"name": "Apple Inc.", "category": "美国科技股", "keywords": ["苹果", "apple", "iphone"]},
+    "MSFT": {"name": "Microsoft Corporation", "category": "美国科技股", "keywords": ["微软", "microsoft"]},
+    "GOOGL": {"name": "Alphabet Inc.", "category": "美国科技股", "keywords": ["谷歌", "google", "alphabet"]},
+    "AMZN": {"name": "Amazon.com Inc.", "category": "美国科技股", "keywords": ["亚马逊", "amazon"]},
+    "TSLA": {"name": "Tesla Inc.", "category": "美国科技股", "keywords": ["特斯拉", "tesla", "电动车"]},
+    "NVDA": {"name": "NVIDIA Corporation", "category": "美国科技股", "keywords": ["英伟达", "nvidia", "芯片", "ai"]},
+    "META": {"name": "Meta Platforms Inc.", "category": "美国科技股", "keywords": ["脸书", "facebook", "meta"]},
+    "NFLX": {"name": "Netflix Inc.", "category": "美国科技股", "keywords": ["奈飞", "netflix"]},
+    
+    # 中国股票
+    "BABA": {"name": "Alibaba Group Holding", "category": "中概股", "keywords": ["阿里巴巴", "alibaba", "淘宝"]},
+    "JD": {"name": "JD.com Inc.", "category": "中概股", "keywords": ["京东", "jd"]},
+    "PDD": {"name": "PDD Holdings Inc.", "category": "中概股", "keywords": ["拼多多", "pdd"]},
+    "TCEHY": {"name": "Tencent Holdings", "category": "中概股", "keywords": ["腾讯", "tencent", "微信"]},
+    "NIO": {"name": "NIO Inc.", "category": "中概股", "keywords": ["蔚来", "nio", "电动车"]},
+    "LI": {"name": "Li Auto Inc.", "category": "中概股", "keywords": ["理想", "li auto", "电动车"]},
+    "XPEV": {"name": "XPeng Inc.", "category": "中概股", "keywords": ["小鹏", "xpeng", "电动车"]},
+    
+    # A股主要指数和股票
+    "000001.SS": {"name": "上证指数", "category": "A股指数", "keywords": ["上证", "上海", "大盘"]},
+    "399001.SZ": {"name": "深证成指", "category": "A股指数", "keywords": ["深证", "深圳", "成指"]},
+    "399006.SZ": {"name": "创业板指", "category": "A股指数", "keywords": ["创业板", "创指"]},
+    "000300.SS": {"name": "沪深300", "category": "A股指数", "keywords": ["沪深300", "hs300"]},
+    
+    # A股个股 - 与数据库数据对应
+    "000001": {"name": "平安银行", "category": "A股银行", "keywords": ["平安银行", "银行", "PAYH", "payh"]},
+    "000002": {"name": "万科A", "category": "A股地产", "keywords": ["万科", "地产", "WKA", "wka"]},
+    "600000": {"name": "浦发银行", "category": "A股银行", "keywords": ["浦发银行", "银行", "PFYH", "pfyh"]},
+    "600519": {"name": "贵州茅台", "category": "A股白酒", "keywords": ["茅台", "白酒", "GZMT", "gzmt"]},
+    "000858": {"name": "五粮液", "category": "A股白酒", "keywords": ["五粮液", "白酒", "WLY", "wly"]},
+    "601318": {"name": "中国平安", "category": "A股保险", "keywords": ["中国平安", "保险", "ZGPA", "zgpa"]},
+    "600036": {"name": "招商银行", "category": "A股银行", "keywords": ["招商银行", "银行", "ZSYH", "zsyh"]},
+    "300001": {"name": "特锐德", "category": "A股创业板", "keywords": ["特锐德", "创业板", "TRD", "trd"]},
+    "688001": {"name": "华兴源创", "category": "A股科创板", "keywords": ["华兴源创", "科创板", "HXYC", "hxyc"]},
+    "601857": {"name": "中国石油", "category": "A股能源", "keywords": ["中国石油", "石油", "ZGSY", "zgsy"]},
+    
+    # 带交易所后缀的格式（保持兼容性）
+    "600519.SS": {"name": "贵州茅台", "category": "A股个股", "keywords": ["茅台", "白酒"]},
+    "000858.SZ": {"name": "五粮液", "category": "A股个股", "keywords": ["五粮液", "白酒"]},
+    "002594.SZ": {"name": "比亚迪", "category": "A股个股", "keywords": ["比亚迪", "byd", "电动车", "新能源"]},
+    
+    # 港股
+    "HSI": {"name": "恒生指数", "category": "港股指数", "keywords": ["恒生", "港股", "香港"]},
+    "0700.HK": {"name": "腾讯控股", "category": "港股个股", "keywords": ["腾讯", "港股腾讯"]},
+    "9988.HK": {"name": "阿里巴巴-SW", "category": "港股个股", "keywords": ["阿里", "港股阿里"]},
+    
+    # 期货
+    "GC=F": {"name": "COMEX黄金期货", "category": "贵金属期货", "keywords": ["美国黄金", "comex黄金", "黄金期货"]},
+    "SI=F": {"name": "COMEX白银期货", "category": "贵金属期货", "keywords": ["美国白银", "comex白银", "白银期货"]},
+    "CL=F": {"name": "WTI原油期货", "category": "能源期货", "keywords": ["原油", "wti", "石油", "油价"]},
+    "BZ=F": {"name": "布伦特原油期货", "category": "能源期货", "keywords": ["布伦特", "brent", "原油"]},
+    "NG=F": {"name": "天然气期货", "category": "能源期货", "keywords": ["天然气", "natural gas"]},
+    "ES=F": {"name": "E-mini S&P 500期货", "category": "股指期货", "keywords": ["标普期货", "es"]},
+    "NQ=F": {"name": "E-mini纳斯达克期货", "category": "股指期货", "keywords": ["纳指期货", "nq"]},
+    
+    # 外汇
+    "USDCNY": {"name": "美元/人民币", "category": "外汇", "keywords": ["美元人民币", "汇率", "离岸人民币"]},
+    "EURUSD": {"name": "欧元/美元", "category": "外汇", "keywords": ["欧美", "欧元美元"]},
+    "GBPUSD": {"name": "英镑/美元", "category": "外汇", "keywords": ["镑美", "英镑美元"]},
+    "USDJPY": {"name": "美元/日元", "category": "外汇", "keywords": ["美日", "美元日元"]},
+    "AUDUSD": {"name": "澳元/美元", "category": "外汇", "keywords": ["澳美", "澳元美元"]},
+    
+    # 加密货币
+    "BTC-USD": {"name": "比特币", "category": "加密货币", "keywords": ["比特币", "bitcoin", "btc"]},
+    "ETH-USD": {"name": "以太坊", "category": "加密货币", "keywords": ["以太坊", "ethereum", "eth"]},
+    "BNB-USD": {"name": "币安币", "category": "加密货币", "keywords": ["币安", "bnb"]},
+    
+    # 上海期货
+    "AU0": {"name": "上海黄金", "category": "国内期货", "keywords": ["上海黄金", "沪金", "au"]},
+    "AG0": {"name": "上海白银", "category": "国内期货", "keywords": ["上海白银", "沪银", "ag"]},
+    "CU0": {"name": "上海铜", "category": "国内期货", "keywords": ["沪铜", "铜", "cu"]},
+    "RB0": {"name": "螺纹钢", "category": "国内期货", "keywords": ["螺纹钢", "钢铁", "rb"]},
+    "SC0": {"name": "上海原油", "category": "国内期货", "keywords": ["上海原油", "国内原油", "sc"]},
+}
+
+# A股股票数据库 (动态更新)
+_a_stock_database = {}
+
+# 关注名单存储 (生产环境应使用数据库)
+_watchlist = {
+    "symbols": ["SPY"],  # 预添加SPY到关注名单
+    "created_at": datetime.now(timezone.utc).isoformat(),
+    "updated_at": datetime.now(timezone.utc).isoformat()
+}
+
+# WebSocket连接管理器
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+        print(f"✅ WebSocket连接建立，当前连接数: {len(self.active_connections)}")
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+            print(f"❌ WebSocket连接断开，当前连接数: {len(self.active_connections)}")
+
+    async def send_personal_message(self, message: str, websocket: WebSocket):
+        try:
+            await websocket.send_text(message)
+        except:
+            self.disconnect(websocket)
+
+    async def broadcast(self, message: str):
+        disconnected = []
+        for connection in self.active_connections.copy():
+            try:
+                await connection.send_text(message)
+            except:
+                disconnected.append(connection)
+        
+        # 清理断开的连接
+        for conn in disconnected:
+            self.disconnect(conn)
+
+manager = ConnectionManager()
+
+# 报警系统
+async def check_and_send_alerts(news_item):
+    """检查新闻是否触发报警并发送通知"""
+    if not _watchlist["symbols"]:
+        return
+    
+    affected_symbols = news_item.get("affected_symbols", [])
+    watched_symbols = [s for s in affected_symbols if s in _watchlist["symbols"]]
+    
+    if not watched_symbols:
+        return
+    
+    # 检查是否是高影响新闻 (影响分数 >= 6.0)
+    impact_score = news_item.get("impact_score", 0)
+    if impact_score >= 6.0:
+        alert_data = {
+            "type": "news_alert",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "news": {
+                "id": news_item.get("id"),
+                "title": news_item.get("title_zh") or news_item.get("title"),
+                "summary": news_item.get("summary_zh") or news_item.get("summary"),
+                "impact_score": impact_score,
+                "sentiment_score": news_item.get("sentiment_score", 0),
+                "watched_symbols": watched_symbols,
+                "source": news_item.get("source"),
+                "url": news_item.get("url")
+            }
+        }
+        
+        # 广播报警
+        import json
+        await manager.broadcast(json.dumps(alert_data))
+        print(f"🚨 发送新闻报警: {news_item.get('title', '')[:50]}...")
+        print(f"   影响品种: {', '.join(watched_symbols)}")
+        print(f"   影响分数: {impact_score}")
+
+def update_cache_background():
+    """后台更新缓存"""
+    import asyncio
+    import time
+    
+    async def update():
+        try:
+            print("🔄 后台更新RSS数据...")
+            data = await get_articles_with_rss(100)
+            _news_cache["data"] = data
+            _news_cache["timestamp"] = time.time()
+            
+            # 更新统计信息
+            _stats["total_articles"] = len(data)
+            _stats["last_update"] = datetime.now(timezone.utc).isoformat()
+            
+            # 检查新闻报警
+            for article in data:
+                await check_and_send_alerts(article)
+            
+            print("✅ 后台缓存更新完成")
+        except Exception as e:
+            print(f"❌ 后台RSS更新失败: {e}")
+    
+    # 在新的事件循环中运行
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(update())
+    loop.close()
+
+@app.get("/api/v1/news/articles")
+async def get_articles(limit: int = Query(20, ge=1, le=100)):
+    """获取实时新闻文章 - 快速响应带后台更新"""
+    import time
+    current_time = time.time()
+    
+    # 检查缓存是否有效
+    if (_news_cache["data"] is not None and 
+        current_time - _news_cache["timestamp"] < CACHE_DURATION):
+        print("📋 返回缓存的新闻数据")
+        return _news_cache["data"][:limit]
+    
+    # 如果没有缓存，先返回示例数据，然后启动后台更新
+    if _news_cache["data"] is None:
+        print("⚡ 首次请求，返回示例数据并启动后台更新")
+        # 启动后台更新
+        from threading import Thread
+        thread = Thread(target=update_cache_background)
+        thread.daemon = True
+        thread.start()
+        
+        return get_sample_articles(limit)
+    
+    # 缓存过期，启动后台更新但仍返回旧缓存
+    print("🔄 缓存过期，返回旧数据并后台更新")
+    from threading import Thread
+    thread = Thread(target=update_cache_background)
+    thread.daemon = True
+    thread.start()
+    
+    return _news_cache["data"][:limit]
 
 @app.get("/api/v1/news/articles_with_rss")  
 async def get_articles_with_rss(limit: int = Query(20, ge=1, le=100)):
     """获取实时新闻文章 - RSS版本（可能超时）"""
-    # 优先使用可靠的Bloomberg源，减少超时风险
+    # 国际和中文财经新闻源
     news_sources = [
         ("https://feeds.bloomberg.com/markets/news.rss", "Bloomberg"),
+        ("https://rss.36kr.com/feed", "36氪"),
+        ("https://www.sina.com.cn/mid/feed.xml", "新浪财经"),
+        ("https://www.jiemian.com/lists/426.xml", "界面新闻"),
+        ("https://feeds.feedburner.com/zhitongcaijing", "智通财经"),
     ]
     
     all_articles = []
@@ -650,6 +851,12 @@ async def get_articles_with_rss(limit: int = Query(20, ge=1, le=100)):
                 continue
                 
             print(f"✅ {source_name} 成功获取 {len(feed.entries)} 条新闻")
+            
+            # 更新统计信息
+            if source_name not in _stats["news_sources"]:
+                _stats["news_sources"][source_name] = {"count": 0, "last_fetch": None}
+            _stats["news_sources"][source_name]["count"] = len(feed.entries)
+            _stats["news_sources"][source_name]["last_fetch"] = datetime.now(timezone.utc).isoformat()
             
             # 处理新闻，增加事实性筛选
             processed_count = 0
@@ -1019,21 +1226,75 @@ async def reverse_search_news(symbol: str):
         "avg_sentiment": round(sum(n["sentiment_score"] for n in news_list) / len(news_list), 3)
     }
 
+@app.get("/api/v1/symbols/search")
+async def search_symbols(q: str = Query(..., description="搜索关键词")):
+    """智能搜索交易品种"""
+    query = q.lower().strip()
+    if not query:
+        return {"results": []}
+    
+    results = []
+    for symbol, info in TRADING_SYMBOLS_DATABASE.items():
+        # 检查symbol代码匹配
+        if query in symbol.lower():
+            results.append({
+                "symbol": symbol,
+                "name": info["name"],
+                "category": info["category"],
+                "match_type": "symbol"
+            })
+            continue
+        
+        # 检查名称匹配
+        if query in info["name"].lower():
+            results.append({
+                "symbol": symbol,
+                "name": info["name"],
+                "category": info["category"],
+                "match_type": "name"
+            })
+            continue
+        
+        # 检查关键词匹配
+        for keyword in info["keywords"]:
+            if query in keyword.lower():
+                results.append({
+                    "symbol": symbol,
+                    "name": info["name"],
+                    "category": info["category"],
+                    "match_type": "keyword"
+                })
+                break
+    
+    # 按匹配类型排序：symbol > name > keyword
+    match_order = {"symbol": 0, "name": 1, "keyword": 2}
+    results.sort(key=lambda x: match_order.get(x["match_type"], 3))
+    
+    return {"results": results[:20]}  # 限制返回20个结果
+
+@app.get("/api/v1/symbols/categories")
+async def get_symbol_categories():
+    """获取品种分类"""
+    categories = {}
+    for symbol, info in TRADING_SYMBOLS_DATABASE.items():
+        category = info["category"]
+        if category not in categories:
+            categories[category] = []
+        categories[category].append({
+            "symbol": symbol,
+            "name": info["name"]
+        })
+    
+    return {"categories": categories}
+
 @app.get("/api/v1/smart-analysis/supported-symbols")
 async def get_supported_symbols():
-    """获取支持的交易品种列表"""
+    """获取支持的交易品种列表 (兼容性接口)"""
     return {
-        "trading_symbols": [
-            "SPY", "QQQ", "GLD", "CL=F", "GC=F", "ES=F",
-            "000001.SS", "399001.SZ", "HSI", "BABA", "JD", "TCEHY",
-            "XAUUSD", "XAGUSD", "USOIL", "BRENT",
-            "USDCNY", "EURUSD", "GBPUSD"
-        ],
+        "trading_symbols": list(TRADING_SYMBOLS_DATABASE.keys()),
         "symbol_categories": {
-            "us_markets": ["SPY", "QQQ", "GLD", "CL=F", "GC=F", "ES=F"],
-            "chinese_markets": ["000001.SS", "399001.SZ", "HSI", "BABA", "JD", "TCEHY"],
-            "commodities": ["XAUUSD", "XAGUSD", "USOIL", "BRENT"],
-            "currencies": ["USDCNY", "EURUSD", "GBPUSD"]
+            category: [s for s, info in TRADING_SYMBOLS_DATABASE.items() if info["category"] == category]
+            for category in set(info["category"] for info in TRADING_SYMBOLS_DATABASE.values())
         },
         "chinese_keywords": [
             "A股", "港股", "沪深", "上证", "深证", "创业板", "科创板",
@@ -1044,6 +1305,518 @@ async def get_supported_symbols():
             "中美", "贸易战", "关税", "汇率", "美联储"
         ]
     }
+
+@app.get("/api/v1/stats/dashboard")
+async def get_dashboard_stats():
+    """获取Dashboard统计信息"""
+    import time
+    return {
+        "news_sources": _stats["news_sources"],
+        "claude_api_calls": _stats["claude_api_calls"],
+        "total_articles": _stats["total_articles"],
+        "last_update": _stats["last_update"],
+        "cache_status": {
+            "has_cache": _news_cache["data"] is not None,
+            "cache_size": len(_news_cache["data"]) if _news_cache["data"] else 0,
+            "cache_age_seconds": int(time.time() - _news_cache["timestamp"]) if _news_cache["timestamp"] else 0
+        },
+        "system_status": {
+            "uptime_seconds": int(time.time()),
+            "cache_duration": CACHE_DURATION
+        }
+    }
+
+# 关注名单API
+@app.get("/api/v1/watchlist")
+async def get_watchlist():
+    """获取关注名单"""
+    return _watchlist
+
+@app.post("/api/v1/watchlist/add")
+async def add_to_watchlist(request: dict):
+    """添加到关注名单"""
+    symbol = request.get("symbol", "").upper()
+    if not symbol:
+        return {"error": "Symbol is required"}
+    
+    # 验证symbol是否在数据库中
+    if symbol not in TRADING_SYMBOLS_DATABASE:
+        return {"error": f"Symbol {symbol} not supported"}
+    
+    if symbol not in _watchlist["symbols"]:
+        _watchlist["symbols"].append(symbol)
+        _watchlist["updated_at"] = datetime.now(timezone.utc).isoformat()
+        if not _watchlist["created_at"]:
+            _watchlist["created_at"] = _watchlist["updated_at"]
+    
+    return {"success": True, "watchlist": _watchlist}
+
+@app.post("/api/v1/watchlist/remove")
+async def remove_from_watchlist(request: dict):
+    """从关注名单移除"""
+    symbol = request.get("symbol", "").upper()
+    if symbol in _watchlist["symbols"]:
+        _watchlist["symbols"].remove(symbol)
+        _watchlist["updated_at"] = datetime.now(timezone.utc).isoformat()
+    
+    return {"success": True, "watchlist": _watchlist}
+
+@app.get("/api/v1/watchlist/news")
+async def get_watchlist_news(hours: int = Query(24, ge=1, le=168)):
+    """获取关注品种相关新闻，按影响程度排序"""
+    if not _watchlist["symbols"]:
+        return {"message": "No symbols in watchlist", "news": []}
+    
+    # 获取所有缓存的新闻
+    all_news = _news_cache["data"] if _news_cache["data"] else []
+    
+    # 筛选关注品种相关的新闻
+    relevant_news = []
+    for article in all_news:
+        affected_symbols = article.get("affected_symbols", [])
+        # 检查是否有交集
+        if any(symbol in _watchlist["symbols"] for symbol in affected_symbols):
+            # 计算与关注品种的相关性得分
+            relevance_score = 0
+            for symbol in affected_symbols:
+                if symbol in _watchlist["symbols"]:
+                    relevance_score += article.get("impact_score", 0)
+            
+            article_copy = article.copy()
+            article_copy["relevance_score"] = relevance_score
+            article_copy["watched_symbols"] = [s for s in affected_symbols if s in _watchlist["symbols"]]
+            relevant_news.append(article_copy)
+    
+    # 按影响程度排序 (从大到小)
+    relevant_news.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
+    
+    return {
+        "watchlist_symbols": _watchlist["symbols"],
+        "total_found": len(relevant_news),
+        "news": relevant_news
+    }
+
+@app.get("/api/v1/trading-advice")
+async def get_trading_advice():
+    """获取AI交易建议"""
+    try:
+        # 获取关注名单中的品种
+        watchlist_symbols = _watchlist.get("symbols", [])
+        
+        if not watchlist_symbols:
+            return {
+                "advice": [],
+                "market_sentiment": {
+                    "overall": "NEUTRAL",
+                    "confidence": 0.5
+                },
+                "generated_at": datetime.now(timezone.utc).isoformat()
+            }
+        
+        # 生成模拟交易建议 (实际应基于新闻分析)
+        advice = []
+        current_time = datetime.now(timezone.utc)
+        
+        # 模拟价格数据
+        price_data = {
+            "SPY": 400.0, "QQQ": 350.0, "AAPL": 150.0, "TSLA": 250.0,
+            "NVDA": 400.0, "MSFT": 300.0, "GOOGL": 120.0, "GLD": 180.0,
+            "USDCNY": 7.2, "BABA": 85.0, "JD": 25.0
+        }
+        
+        for symbol in watchlist_symbols[:5]:  # 最多5个建议
+            base_price = price_data.get(symbol, 100.0)
+            direction = random.choice(["BUY", "SELL", "HOLD"])
+            confidence = random.uniform(0.6, 0.9)
+            risk_level = random.choice(["LOW", "MEDIUM", "HIGH"])
+            
+            if direction == "BUY":
+                entry_price = base_price * random.uniform(0.98, 1.02)
+                target_price = entry_price * random.uniform(1.05, 1.15)
+                stop_loss = entry_price * random.uniform(0.90, 0.95)
+                reasoning = f"基于最新财报和市场动态分析，{symbol}显示强劲的上涨动能。技术指标显示突破关键阻力位，建议逢低买入。"
+            elif direction == "SELL":
+                entry_price = base_price * random.uniform(0.98, 1.02)
+                target_price = entry_price * random.uniform(0.85, 0.95)
+                stop_loss = entry_price * random.uniform(1.05, 1.10)
+                reasoning = f"市场情绪转谨慎，{symbol}面临技术面压力。建议减仓或做空，等待更好的入场时机。"
+            else:  # HOLD
+                entry_price = base_price
+                target_price = base_price * random.uniform(1.02, 1.08)
+                stop_loss = base_price * random.uniform(0.92, 0.98)
+                reasoning = f"{symbol}目前处于整理阶段，建议持有观望，等待明确的方向性信号。"
+            
+            advice_item = {
+                "id": f"advice_{symbol}_{int(current_time.timestamp())}",
+                "symbol": symbol,
+                "direction": direction,
+                "entry_price": round(entry_price, 2),
+                "target_price": round(target_price, 2),
+                "stop_loss": round(stop_loss, 2),
+                "confidence": round(confidence, 2),
+                "reasoning": reasoning,
+                "news_sources": ["财经新闻", "技术分析", "市场情报"],
+                "time_horizon": random.choice(["短期(1-7天)", "中期(1-4周)", "长期(1-3月)"]),
+                "risk_level": risk_level,
+                "created_at": current_time.isoformat()
+            }
+            advice.append(advice_item)
+        
+        # 模拟市场情绪
+        market_sentiment = {
+            "overall": random.choice(["BULLISH", "BEARISH", "NEUTRAL"]),
+            "confidence": round(random.uniform(0.6, 0.9), 2)
+        }
+        
+        return {
+            "advice": advice,
+            "market_sentiment": market_sentiment,
+            "generated_at": current_time.isoformat()
+        }
+        
+    except Exception as e:
+        print(f"获取交易建议失败: {e}")
+        return {
+            "advice": [],
+            "market_sentiment": {
+                "overall": "NEUTRAL",
+                "confidence": 0.5
+            },
+            "generated_at": datetime.now(timezone.utc).isoformat()
+        }
+
+# WebSocket端点
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # 等待客户端消息
+            data = await websocket.receive_text()
+            print(f"收到WebSocket消息: {data}")
+            
+            # 发送确认消息
+            await manager.send_personal_message(f"Echo: {data}", websocket)
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
+# 模拟价格数据生成器
+async def generate_price_data():
+    """生成模拟价格数据 - 基于关注名单"""
+    import random
+    import json
+    
+    # 从数据库生成价格数据 (模拟数据，仅供演示)
+    all_base_prices = {}
+    price_units = {}  # 存储价格单位信息
+    
+    for symbol in TRADING_SYMBOLS_DATABASE.keys():
+        if symbol.startswith("00") and symbol.endswith(".SS"):  # A股指数
+            all_base_prices[symbol] = 3000.0
+            price_units[symbol] = "点"
+        elif symbol.startswith("39") and symbol.endswith(".SZ"):  # 深圳指数
+            all_base_prices[symbol] = 12000.0
+            price_units[symbol] = "点"
+        elif symbol.startswith("60") and symbol.endswith(".SS"):  # 上海股票
+            all_base_prices[symbol] = 200.0
+            price_units[symbol] = "元"
+        elif symbol.startswith("00") and symbol.endswith(".SZ"):  # 深圳股票
+            all_base_prices[symbol] = 50.0
+            price_units[symbol] = "元"
+        elif symbol.endswith(".HK"):  # 港股
+            all_base_prices[symbol] = 100.0
+            price_units[symbol] = "港元"
+        elif symbol.endswith("=F"):  # 期货
+            if "GC" in symbol:  # 黄金
+                all_base_prices[symbol] = 2000.0
+                price_units[symbol] = "美元/盎司"
+            elif "CL" in symbol or "BZ" in symbol:  # 原油
+                all_base_prices[symbol] = 75.0
+                price_units[symbol] = "美元/桶"
+            elif "SI" in symbol:  # 白银
+                all_base_prices[symbol] = 25.0
+                price_units[symbol] = "美元/盎司"
+            elif "NG" in symbol:  # 天然气
+                all_base_prices[symbol] = 3.5
+                price_units[symbol] = "美元/百万英热单位"
+            else:
+                all_base_prices[symbol] = 4000.0  # 股指期货
+                price_units[symbol] = "点"
+        elif "USD" in symbol:  # 外汇
+            if symbol == "USDCNY":
+                all_base_prices[symbol] = 7.2
+                price_units[symbol] = "人民币"
+            elif symbol == "USDJPY":
+                all_base_prices[symbol] = 150.0
+                price_units[symbol] = "日元"
+            else:
+                all_base_prices[symbol] = 1.1
+                price_units[symbol] = "汇率"
+        elif symbol.endswith("-USD"):  # 加密货币
+            if "BTC" in symbol:
+                all_base_prices[symbol] = 40000.0
+                price_units[symbol] = "美元"
+            elif "ETH" in symbol:
+                all_base_prices[symbol] = 2500.0
+                price_units[symbol] = "美元"
+            else:
+                all_base_prices[symbol] = 300.0
+                price_units[symbol] = "美元"
+        elif symbol in ["AU0", "AG0", "CU0", "RB0", "SC0"]:  # 国内期货
+            if symbol == "AU0":
+                all_base_prices[symbol] = 450.0
+                price_units[symbol] = "元/克"
+            elif symbol == "AG0":
+                all_base_prices[symbol] = 5500.0
+                price_units[symbol] = "元/公斤"
+            elif symbol == "CU0":
+                all_base_prices[symbol] = 70000.0
+                price_units[symbol] = "元/吨"
+            elif symbol == "RB0":
+                all_base_prices[symbol] = 3800.0
+                price_units[symbol] = "元/吨"
+            elif symbol == "SC0":
+                all_base_prices[symbol] = 600.0
+                price_units[symbol] = "元/桶"
+        else:  # 美股等其他
+            if symbol in ["SPY", "QQQ", "IWM", "GLD", "SLV"]:
+                all_base_prices[symbol] = {"SPY": 440.0, "QQQ": 380.0, "IWM": 210.0, "GLD": 190.0, "SLV": 24.0}[symbol]
+                price_units[symbol] = "美元"
+            elif symbol in ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META", "NFLX"]:
+                prices = {"AAPL": 175.0, "MSFT": 350.0, "GOOGL": 140.0, "AMZN": 160.0, "TSLA": 200.0, "NVDA": 850.0, "META": 320.0, "NFLX": 450.0}
+                all_base_prices[symbol] = prices.get(symbol, 150.0)
+                price_units[symbol] = "美元"
+            else:
+                all_base_prices[symbol] = 100.0
+                price_units[symbol] = "美元"
+    
+    # 只为关注名单中的品种初始化价格
+    def get_watchlist_prices():
+        watchlist_symbols = _watchlist.get("symbols", [])
+        return {symbol: all_base_prices.get(symbol, 100.0) for symbol in watchlist_symbols}
+    
+    prices = get_watchlist_prices()
+    
+    while True:
+        # 动态更新价格字典（当关注名单变化时）
+        current_watchlist = _watchlist.get("symbols", [])
+        
+        # 添加新的关注品种
+        for symbol in current_watchlist:
+            if symbol not in prices:
+                prices[symbol] = all_base_prices.get(symbol, 100.0)
+        
+        # 移除不在关注名单中的品种
+        prices = {k: v for k, v in prices.items() if k in current_watchlist}
+        
+        # 更新价格 (模拟市场波动)
+        for symbol in prices:
+            change_pct = random.uniform(-0.5, 0.5) / 100  # -0.5% 到 +0.5%
+            prices[symbol] *= (1 + change_pct)
+            prices[symbol] = round(prices[symbol], 2)
+        
+        # 准备价格数据 (包含单位信息)
+        prices_with_units = {}
+        for symbol, price in prices.items():
+            prices_with_units[symbol] = {
+                "price": price,
+                "unit": price_units.get(symbol, "")
+            }
+        
+        price_data = {
+            "type": "price_update",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "prices": prices.copy(),  # 兼容性
+            "prices_with_units": prices_with_units  # 新格式包含单位
+        }
+        
+        # 广播给所有连接的客户端
+        await manager.broadcast(json.dumps(price_data))
+        
+        # 等待5秒
+        await asyncio.sleep(5)
+
+# A股股票数据管理API
+@app.get("/api/v1/stocks/a-stocks")
+async def get_a_stocks(limit: int = Query(100, ge=1, le=1000)):
+    """获取A股股票列表"""
+    stocks = list(_a_stock_database.values())[:limit]
+    return {
+        "stocks": stocks,
+        "total_count": len(_a_stock_database),
+        "returned_count": len(stocks)
+    }
+
+@app.get("/api/v1/stocks/a-stocks/{stock_code}")
+async def get_a_stock_detail(stock_code: str):
+    """获取单只A股详细信息"""
+    stock = _a_stock_database.get(stock_code)
+    if not stock:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="股票未找到")
+    return stock
+
+@app.post("/api/v1/stocks/crawler/run")
+async def run_stock_crawler():
+    """运行股票数据爬虫"""
+    try:
+        print("开始执行股票数据爬取...")
+        
+        # 动态导入爬虫模块
+        import sys
+        import os
+        sys.path.append(os.path.dirname(__file__))
+        
+        from stock_crawler import StockCrawler
+        
+        crawler = StockCrawler()
+        stocks = crawler.crawl_all_stocks()
+        
+        # 更新内存数据库
+        updated_count = 0
+        for stock in stocks:
+            code = stock.get('code')
+            if code:
+                _a_stock_database[code] = stock
+                updated_count += 1
+        
+        # 同步更新交易品种数据库
+        sync_trading_symbols_with_a_stocks()
+        
+        return {
+            "success": True,
+            "message": "股票数据爬取完成",
+            "crawled_count": len(stocks),
+            "updated_count": updated_count,
+            "total_stocks": len(_a_stock_database)
+        }
+        
+    except Exception as e:
+        print(f"股票爬取失败: {e}")
+        return {
+            "success": False,
+            "message": f"股票数据爬取失败: {str(e)}",
+            "crawled_count": 0,
+            "updated_count": 0,
+            "total_stocks": len(_a_stock_database)
+        }
+
+@app.post("/api/v1/stocks/import")
+async def import_stock_data(request: dict):
+    """导入股票数据"""
+    try:
+        stocks = request.get("stocks", [])
+        if not stocks:
+            return {"success": False, "message": "没有提供股票数据"}
+        
+        imported_count = 0
+        for stock in stocks:
+            code = stock.get("code")
+            if code and isinstance(stock, dict):
+                _a_stock_database[code] = {
+                    "code": code,
+                    "name": stock.get("name", ""),
+                    "full_name": stock.get("full_name", ""),
+                    "list_date": stock.get("list_date", ""),
+                    "industry": stock.get("industry", ""),
+                    "area": stock.get("area", ""),
+                    "market": stock.get("market", ""),
+                    "exchange": stock.get("exchange", ""),
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }
+                imported_count += 1
+        
+        # 同步更新交易品种数据库
+        sync_trading_symbols_with_a_stocks()
+        
+        return {
+            "success": True,
+            "message": f"成功导入 {imported_count} 只股票",
+            "imported_count": imported_count,
+            "total_stocks": len(_a_stock_database)
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"导入失败: {str(e)}"
+        }
+
+def sync_trading_symbols_with_a_stocks():
+    """同步A股数据到交易品种数据库"""
+    global TRADING_SYMBOLS_DATABASE
+    
+    for code, stock in _a_stock_database.items():
+        symbol_key = code  # 使用股票代码作为key
+        market = stock.get('market', 'SZ')
+        
+        # 为上交所股票添加.SS后缀，深交所添加.SZ后缀
+        if market == 'SH':
+            symbol_with_suffix = f"{code}.SS"
+        else:
+            symbol_with_suffix = f"{code}.SZ"
+        
+        # 生成关键词
+        keywords = [stock.get('name', ''), code]
+        if stock.get('industry'):
+            keywords.append(stock.get('industry'))
+        
+        # 更新交易品种数据库
+        TRADING_SYMBOLS_DATABASE[code] = {
+            "name": stock.get('name', ''),
+            "category": f"A股{stock.get('industry', '个股')}",
+            "keywords": [kw for kw in keywords if kw]
+        }
+        
+        # 同时添加带后缀的版本
+        TRADING_SYMBOLS_DATABASE[symbol_with_suffix] = {
+            "name": stock.get('name', ''),
+            "category": f"A股{stock.get('industry', '个股')}",
+            "keywords": [kw for kw in keywords if kw]
+        }
+
+@app.get("/api/v1/stocks/stats")
+async def get_stock_stats():
+    """获取股票数据统计"""
+    if not _a_stock_database:
+        return {
+            "total_stocks": 0,
+            "by_market": {},
+            "by_industry": {},
+            "by_area": {}
+        }
+    
+    # 按市场统计
+    market_stats = {}
+    industry_stats = {}
+    area_stats = {}
+    
+    for stock in _a_stock_database.values():
+        # 市场统计
+        market = stock.get('market', 'Unknown')
+        market_stats[market] = market_stats.get(market, 0) + 1
+        
+        # 行业统计
+        industry = stock.get('industry', 'Unknown')
+        industry_stats[industry] = industry_stats.get(industry, 0) + 1
+        
+        # 地区统计
+        area = stock.get('area', 'Unknown')
+        area_stats[area] = area_stats.get(area, 0) + 1
+    
+    return {
+        "total_stocks": len(_a_stock_database),
+        "by_market": market_stats,
+        "by_industry": dict(sorted(industry_stats.items(), key=lambda x: x[1], reverse=True)[:20]),
+        "by_area": dict(sorted(area_stats.items(), key=lambda x: x[1], reverse=True)[:20])
+    }
+
+# 启动事件处理器
+@app.on_event("startup")
+async def startup_event():
+    # 启动价格数据推送任务
+    asyncio.create_task(generate_price_data())
+    print("🚀 实时价格推送服务已启动")
 
 if __name__ == "__main__":
     import uvicorn

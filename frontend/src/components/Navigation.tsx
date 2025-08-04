@@ -1,12 +1,15 @@
 import React from 'react';
 import { Menu } from 'antd';
 import { useNavigate, useLocation } from 'react-router-dom';
+import NewsAlert from './NewsAlert';
 import {
   DashboardOutlined,
   FileTextOutlined,
   BarChartOutlined,
   ExperimentOutlined,
   FundOutlined,
+  StarOutlined,
+  BulbOutlined,
 } from '@ant-design/icons';
 
 const Navigation: React.FC = () => {
@@ -33,6 +36,16 @@ const Navigation: React.FC = () => {
       key: '/smart-analysis',
       icon: <FundOutlined />,
       label: '智能分析',
+    },
+    {
+      key: '/watchlist',
+      icon: <StarOutlined />,
+      label: '关注名单',
+    },
+    {
+      key: '/trading-advice',
+      icon: <BulbOutlined />,
+      label: '交易建议',
     },
     {
       key: '/backtest',
@@ -66,6 +79,9 @@ const Navigation: React.FC = () => {
         onClick={handleMenuClick}
         style={{ flex: 1, minWidth: 0, border: 'none' }}
       />
+      <div style={{ marginRight: '24px' }}>
+        <NewsAlert />
+      </div>
     </div>
   );
 };
